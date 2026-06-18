@@ -82,63 +82,158 @@
   }
 
   // ---- PDF drawing ----
-  function drawCard(doc, title, slots, grid) {
+  // Color palette (RGB).
+  const C = {
+    ink:      [33, 43, 58],
+    primary:  [37, 99, 175],
+    primaryDk:[24, 71, 130],
+    accent:   [231, 124, 38],
+    altFill:  [238, 243, 250],
+    line:     [196, 208, 224],
+    muted:    [128, 138, 154],
+    white:    [255, 255, 255],
+  };
+  const fill = (doc, c) => doc.setFillColor(c[0], c[1], c[2]);
+  const draw = (doc, c) => doc.setDrawColor(c[0], c[1], c[2]);
+  const text = (doc, c) => doc.setTextColor(c[0], c[1], c[2]);
+
+  // Draw a filled n-point star centered at (cx, cy).
+  function star(doc, cx, cy, outer, inner, color) {
+    const pts = [];
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? outer : inner;
+      const a = -Math.PI / 2 + (i * Math.PI) / 5;
+      pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+    }
+    const deltas = pts.slice(1).map((p, i) => [p[0] - pts[i][0], p[1] - pts[i][1]]);
+    fill(doc, color);
+    doc.lines(deltas, pts[0][0], pts[0][1], [1, 1], "F", true);
+  }
+
+  // Fit a word into a cell: wrap + shrink font; returns {lines, fontSize, lineH}.
+  function fitText(doc, word, maxW, maxH, startSize) {
+    let fontSize = startSize;
+    let lines;
+    do {
+      doc.setFontSize(fontSize);
+      lines = doc.splitTextToSize(word, maxW);
+      if (lines.length * (fontSize + 2) <= maxH) break;
+      fontSize -= 0.5;
+    } while (fontSize > 6);
+    return { lines, fontSize, lineH: fontSize + 2 };
+  }
+
+  function drawCard(doc, title, slots, grid, cardNum, total) {
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
-    const margin = 40;
-    const titleH = 60;
+    const margin = 36;
+    const frameX = margin, frameY = margin;
+    const frameW = pageW - margin * 2, frameH = pageH - margin * 2;
+    const pad = 20;
+    const contentX = frameX + pad;
+    const contentW = frameW - pad * 2;
 
-    // Title
+    // Decorative double frame.
+    doc.setLineWidth(2);
+    draw(doc, C.primary);
+    doc.roundedRect(frameX, frameY, frameW, frameH, 12, 12, "S");
+    doc.setLineWidth(0.6);
+    draw(doc, C.line);
+    doc.roundedRect(frameX + 5, frameY + 5, frameW - 10, frameH - 10, 9, 9, "S");
+
+    // Title banner.
+    const bannerY = frameY + pad;
+    const bannerH = 50;
+    fill(doc, C.primary);
+    doc.roundedRect(contentX, bannerY, contentW, bannerH, 9, 9, "F");
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(24);
-    doc.text(title, pageW / 2, margin + 18, { align: "center" });
+    text(doc, C.white);
+    const tFit = fitText(doc, title.toUpperCase(), contentW - 30, bannerH, 26);
+    doc.setFontSize(tFit.fontSize);
+    const tStartY = bannerY + bannerH / 2 - ((tFit.lines.length - 1) * tFit.lineH) / 2 + tFit.fontSize / 3;
+    tFit.lines.forEach((line, i) =>
+      doc.text(line, pageW / 2, tStartY + i * tFit.lineH, { align: "center" })
+    );
 
-    const gridTop = margin + titleH;
-    const available = Math.min(pageW - margin * 2, pageH - gridTop - margin);
-    const cell = available / grid;
-    const gridLeft = (pageW - cell * grid) / 2;
+    // Tagline under banner.
+    const taglineY = bannerY + bannerH + 16;
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(10.5);
+    text(doc, C.muted);
+    doc.text("Spot it  •  mark it  •  shout BINGO!", pageW / 2, taglineY, { align: "center" });
 
-    doc.setLineWidth(1.2);
-    doc.setDrawColor(40, 60, 100);
+    // Footer layout reserved at the bottom.
+    const footerH = 34;
+    const footerTop = frameY + frameH - pad - footerH;
+
+    // Grid geometry — centered in the space between tagline and footer.
+    const availTop = taglineY + 14;
+    const availH = footerTop - availTop;
+    const cell = Math.min(contentW / grid, availH / grid);
+    const gridW = cell * grid;
+    const gridLeft = contentX + (contentW - gridW) / 2;
+    const gridTop = availTop + (availH - gridW) / 2;
+    const gap = 3;
 
     for (let r = 0; r < grid; r++) {
       for (let c = 0; c < grid; c++) {
         const x = gridLeft + c * cell;
         const y = gridTop + r * cell;
+        const cx = x + cell / 2, cy = y + cell / 2;
         const word = slots[r * grid + c] || "";
+        const bx = x + gap, by = y + gap, bs = cell - gap * 2;
 
         if (word === "FREE") {
-          doc.setFillColor(45, 108, 223);
-          doc.rect(x, y, cell, cell, "FD");
-          doc.setTextColor(255, 255, 255);
+          fill(doc, C.accent);
+          draw(doc, C.accent);
+          doc.setLineWidth(0.8);
+          doc.roundedRect(bx, by, bs, bs, 6, 6, "FD");
+          star(doc, cx, cy - bs * 0.12, bs * 0.26, bs * 0.11, C.white);
           doc.setFont("helvetica", "bold");
-          doc.setFontSize(16);
-          doc.text("FREE", x + cell / 2, y + cell / 2 + 5, { align: "center" });
-          doc.setTextColor(0, 0, 0);
+          doc.setFontSize(Math.min(15, bs * 0.22));
+          text(doc, C.white);
+          doc.text("FREE", cx, cy + bs * 0.28, { align: "center" });
           continue;
         }
 
-        doc.rect(x, y, cell, cell);
-        doc.setTextColor(20, 30, 45);
+        // Checkerboard tint for visual rhythm.
+        fill(doc, (r + c) % 2 === 0 ? C.altFill : C.white);
+        draw(doc, C.line);
+        doc.setLineWidth(0.8);
+        doc.roundedRect(bx, by, bs, bs, 6, 6, "FD");
+
+        text(doc, C.ink);
         doc.setFont("helvetica", "normal");
-
-        // Fit text: shrink font and wrap to cell width.
-        const maxW = cell - 12;
-        let fontSize = 12;
-        let lines;
-        do {
-          doc.setFontSize(fontSize);
-          lines = doc.splitTextToSize(word, maxW);
-          if (lines.length * (fontSize + 2) <= cell - 10) break;
-          fontSize -= 1;
-        } while (fontSize > 6);
-
-        const lineH = fontSize + 2;
-        const startY = y + cell / 2 - ((lines.length - 1) * lineH) / 2 + fontSize / 3;
-        lines.forEach((line, i) => {
-          doc.text(line, x + cell / 2, startY + i * lineH, { align: "center" });
-        });
+        const f = fitText(doc, word, bs - 10, bs - 8, Math.min(12, bs * 0.2));
+        doc.setFontSize(f.fontSize);
+        const startY = cy - ((f.lines.length - 1) * f.lineH) / 2 + f.fontSize / 3;
+        f.lines.forEach((line, i) =>
+          doc.text(line, cx, startY + i * f.lineH, { align: "center" })
+        );
       }
+    }
+
+    // Footer: divider, play instructions, card number.
+    draw(doc, C.line);
+    doc.setLineWidth(0.6);
+    doc.line(contentX, footerTop + 6, contentX + contentW, footerTop + 6);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    text(doc, C.muted);
+    doc.text(
+      "First to fill a full row, column, or diagonal wins!",
+      pageW / 2,
+      footerTop + 22,
+      { align: "center" }
+    );
+    if (total > 1) {
+      doc.setFontSize(8.5);
+      doc.text(
+        "Card " + cardNum + " of " + total,
+        contentX + contentW,
+        footerTop + 22,
+        { align: "right" }
+      );
     }
   }
 
@@ -187,17 +282,7 @@
       for (let i = 0; i < numCards; i++) {
         if (i > 0) doc.addPage();
         const slots = buildCard(commonItems, fillPool, cells, useFree, freeIndex);
-        drawCard(doc, title, slots, grid);
-        // Card number footer
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(9);
-        doc.setTextColor(120, 120, 120);
-        doc.text(
-          "Card " + (i + 1) + " of " + numCards,
-          doc.internal.pageSize.getWidth() / 2,
-          doc.internal.pageSize.getHeight() - 24,
-          { align: "center" }
-        );
+        drawCard(doc, title, slots, grid, i + 1, numCards);
       }
 
       const safeTitle = title.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "bingo";
